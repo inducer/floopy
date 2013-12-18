@@ -1,0 +1,39 @@
+
+occaKernel void foo(occaKernelInfoArg,
+		    occaPointer double * a, 
+		    double occaVariable d){
+
+  occaOuterFor1{
+
+    occaOuterFor0{
+
+      int i = occaOuterId1;
+      int j = occaOuterId0;
+      
+      occaShared int b[3][3];
+      
+      occaPrivate(int, n);
+
+      occaInnerFor0{
+	
+	int k = occaInnerId0;
+
+	int id = k + occaInnerDim0*j + occaInnerDim0*occaOuterDim0*i;
+
+	n = id;
+	
+      }
+
+      occaLocalMemFence;
+
+      occaInnerFor0{
+	
+	int k = occaInnerId0;
+
+	a[n] = d;
+      }   
+    }
+  }
+  
+}
+
