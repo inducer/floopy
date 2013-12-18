@@ -34,7 +34,6 @@
 #define occaOuterId0  (blockIdx.x)
 #define occaOuterId1  (blockIdx.y)
 
-#define occaBarrier __syncthreads();
 
 #define occaShared  __shared__
 
@@ -67,8 +66,9 @@
 #define occaFunctionCall(FUNCTION, ...) FUNCTION(__VA_ARGS__)
 #endif
 
-#define occaLocalMemFence __syncthreads();
-#define occaGlobalMemFence __syncthreads();
+#define occaLocalMemFence
+#define occaGlobalMemFence
+#define occaBarrier(foo) __syncthreads();
 
 #define occaPrivateArray(type, name, n) type name[n]
 #define occaPrivate(type, name) type name

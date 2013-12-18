@@ -24,7 +24,7 @@ occaKernel void foo(occaKernelInfoArg,
 	
       }
 
-      occaLocalMemFence;
+      occaBarrier(occaLocalMemFence);
 
       occaInnerFor0{
 	

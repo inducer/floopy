@@ -51,8 +51,6 @@ for(int occaOuterId0 = 0; occaOuterId0 < occaOuterDim0; ++occaOuterId0)
 #define occaGlobalId1  ( occaInnerId1 + occaInnerDim1*occaOuterId1 )
 #define occaGlobalId2  ( occaInnerId2 )
 
-#define occaBarrier
-
 #define occaShared
 
 #define occaPointer
@@ -92,6 +90,8 @@ occaInnerId2
 #define occaLocalMemFence
 
 #define occaGlobalMemFence
+
+#define occaBarrier(foo)
 
 #define occaFunctionShared
 

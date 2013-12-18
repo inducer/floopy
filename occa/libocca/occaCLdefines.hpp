@@ -37,8 +37,9 @@
 #define occaGlobalId1 get_global_id(1)
 #define occaGlobalId2 get_global_id(2)
 
-#define occaLocalMemFence barrier(CLK_LOCAL_MEM_FENCE)
-#define occaGlobalMemFence barrier(CLK_GLOBAL_MEM_FENCE)
+#define occaLocalMemFence CLK_LOCAL_MEM_FENCE
+#define occaGlobalMemFence CLK_GLOBAL_MEM_FENCE
+#define occaBarrier(foo) barrier(foo)
 
 #define occaShared  __local
 
