@@ -22,12 +22,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 
-from floopy.fortran.diagnostic import TranslationError
-import numpy as np
+import re
 
 
 class FTreeWalkerBase(object):
     def __init__(self):
+        from floopy.fortran.expression import FortranExpressionParser
         self.expr_parser = FortranExpressionParser(self)
 
     def rec(self, expr, *args, **kwargs):

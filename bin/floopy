@@ -1,5 +1,8 @@
 #! /usr/bin/env python
 
+import loopy as lp
+import numpy as np
+
 
 def main():
     from optparse import OptionParser
@@ -43,10 +46,8 @@ def main():
 
     if options.lang == "loopy":
         data_dic = {}
-        import loopy
-        import numpy
-        data_dic["lp"] = loopy
-        data_dic["np"] = numpy
+        data_dic["lp"] = lp
+        data_dic["np"] = np
         data_dic["lp_target"] = target
 
         with open(infile, "r") as infile_fd:
@@ -58,30 +59,48 @@ def main():
             raise RuntimeError("loopy-lang requires 'lp_knl' "
                     "to be defined on exit")
 
+        if options.name is not None:
+            kernel = kernel.copy(name=options.name)
+
+        kernels = [kernel]
+
     elif options.lang == "floopy":
         with open(infile, "r") as infile_fd:
             floopy_src = infile_fd.read()
 
         from floopy.fortran import f2loopy
-        kernel = f2loopy(target, floopy_src)
+        kernels = f2loopy(target, floopy_src)
+
+        if options.name is not None:
+            kernels = [kernel for kernel in kernels
+                    if kernel.name == options.name]
+
+        if not kernels:
+            raise RuntimeError("no kernels found (name specified: %s)"
+                    % options.name)
 
     else:
         raise RuntimeError("unknown language: '%s'"
                 % options.lang)
 
-    if options.name is not None:
-        kernel = kernel.copy(name=options.name)
+    new_kernels = []
+    for kernel in kernels:
+        new_args = [
+                lp.GlobalArg("occa_info", np.int32, shape=None)
+                ] + kernel.args
+        new_kernels.append(kernel.copy(args=new_args))
 
-    new_args = [
-            loopy.GlobalArg("occa_info", numpy.int32, shape=None)
-            ] + kernel.args
-    kernel = kernel.copy(args=new_args)
+    kernels = new_kernels
+    del new_kernels
 
+    codes = []
     from loopy.codegen import generate_code
-    code, impl_arg_info = generate_code(kernel)
+    for kernel in kernels:
+        code, impl_arg_info = generate_code(kernel)
+        codes.append(code)
 
     with open(outfile, "w") as outfile_fd:
-        outfile_fd.write(code)
+        outfile_fd.write("\n\n".join(codes))
 
 
 if __name__ == "__main__":

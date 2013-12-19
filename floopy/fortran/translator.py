@@ -22,8 +22,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 
-
-from floopy.fortran.parser import FTreeWalkerBase
+import loopy as lp
+import numpy as np
+from warnings import warn
+from floopy.fortran.tree import FTreeWalkerBase
+from floopy.fortran.diagnostic import (
+        TranslationError, TranslatorWarning)
+import islpy as isl
+from islpy import dim_type
 
 
 # {{{ scope
@@ -49,14 +55,20 @@ class Scope(object):
 
         self.arg_names = arg_names
 
-        self.index_set = None
+        self.index_sets = []
+
+        # This dict has a key for every iname that is
+        # currently active. These keys map to the loopy-side
+        # name of the iname, which may differ because
+        # duplicate inames need to be renamed for loopy.
+        self.active_iname_aliases = {}
+
         self.instructions = []
         self.temporary_variables = []
 
-        self.in_transform_code = False
-        self.transform_code_lines = []
-
         self.used_names = set()
+
+        self.previous_instruction_id = None
 
     def known_names(self):
         return (self.used_names
@@ -66,7 +78,8 @@ class Scope(object):
     def is_known(self, name):
         return (name in self.used_names
                 or name in self.dim_map
-                or name in self.type_map)
+                or name in self.type_map
+                or name in self.arg_names)
 
     def use_name(self, name):
         self.used_names.add(name)
@@ -86,35 +99,58 @@ class Scope(object):
     def get_shape(self, name):
         return self.dim_map.get(name, ())
 
-    def translate_var_name(self, name):
-        shape = self.dim_map.get(name)
-        if name in self.data and shape is not None:
-            return "%s_%s" % (self.subprogram_name, name)
-        else:
-            return name
+    def get_iname_alias_subst_mapper(self):
+        from pymbolic.mapper.substitutor import make_subst_func
+        from loopy.symbolic import SubstitutionMapper
+
+        from pymbolic import var
+        iname_aliases_with_vars = dict(
+                (iname, var(alias))
+                for iname, alias in self.active_iname_aliases.iteritems())
+
+        return SubstitutionMapper(
+                make_subst_func(iname_aliases_with_vars))
 
 # }}}
 
 
+def remove_common_indentation(lines):
+    while lines[0].strip() == "":
+        lines.pop(0)
+    while lines[-1].strip() == "":
+        lines.pop(-1)
+
+    if lines:
+        base_indent = 0
+        while lines[0][base_indent] in " \t":
+            base_indent += 1
+
+        for line in lines[1:]:
+            if line[:base_indent].strip():
+                raise ValueError("inconsistent indentation")
+
+    return "\n".join(line[base_indent:] for line in lines)
+
+
 # {{{ translator
 
-class F2CLTranslator(FTreeWalkerBase):
+class F2LoopyTranslator(FTreeWalkerBase):
     def __init__(self):
+        FTreeWalkerBase.__init__(self)
+
         self.scope_stack = []
+        self.isl_context = isl.Context()
 
-    def map_statement_list(self, content):
-        body = []
+        self.insn_id_counter = 0
 
-        for c in content:
-            mapped = self.rec(c)
-            if mapped is None:
-                warn("mapping '%s' returned None" % type(c))
-            elif isinstance(mapped, list):
-                body.extend(mapped)
-            else:
-                body.append(mapped)
+        self.kernels = []
 
-        return body
+        # Flag to record whether 'loopy begin transform' comment
+        # has been seen.
+        self.in_transform_code = False
+
+        self.transform_code_lines = []
+
 
     # {{{ map_XXX functions
 
@@ -122,7 +158,8 @@ class F2CLTranslator(FTreeWalkerBase):
         scope = Scope(None)
         self.scope_stack.append(scope)
 
-        return self.map_statement_list(node.content)
+        for c in node.content:
+            self.rec(c)
 
     def map_Subroutine(self, node):
         assert not node.prefix
@@ -131,42 +168,12 @@ class F2CLTranslator(FTreeWalkerBase):
         scope = Scope(node.name, list(node.args))
         self.scope_stack.append(scope)
 
-        body = self.map_statement_list(node.content)
-
-        pre_func_decl, in_func_decl = self.get_declarations()
-        body = in_func_decl + [cgen.Line()] + body
-
-        if isinstance(body[-1], cgen.Statement) and body[-1].text == "return":
-            body.pop()
-
-        def get_arg_decl(arg_idx, arg_name):
-            decl = self.get_declarator(arg_name)
-
-            if self.arg_needs_pointer(node.name, arg_idx):
-                hint = self.addr_space_hints.get((node.name, arg_name))
-                if hint:
-                    decl = hint(cgen.Pointer(decl))
-                else:
-                    if self.use_restrict_pointers:
-                        decl = cgen.RestrictPointer(decl)
-                    else:
-                        decl = cgen.Pointer(decl)
-
-            return decl
-
-
-        result =  cgen.FunctionBody(
-                cgen.FunctionDeclaration(
-                    cgen.Value("void", node.name),
-                    [get_arg_decl(i, arg) for i, arg in enumerate(node.args)]
-                    ),
-                cgen.Block(body))
+        for c in node.content:
+            self.rec(c)
 
         self.scope_stack.pop()
-        if pre_func_decl:
-            return pre_func_decl + [cgen.Line(), result]
-        else:
-            return result
+
+        self.kernels.append(scope)
 
     def map_EndSubroutine(self, node):
         return []
@@ -280,31 +287,39 @@ class F2CLTranslator(FTreeWalkerBase):
     # }}}
 
     def map_Assignment(self, node):
-        lhs = self.parse_expr(node.variable)
+        scope = self.scope_stack[-1]
+
+        iname_alias_subst_map = scope.get_iname_alias_subst_mapper()
+        lhs = iname_alias_subst_map(self.parse_expr(node.variable))
         from pymbolic.primitives import Subscript
         if isinstance(lhs, Subscript):
             lhs_name = lhs.aggregate.name
         else:
             lhs_name = lhs.name
 
-        scope = self.scope_stack[-1]
         scope.use_name(lhs_name)
-        infer_type = scope.get_type_inference_mapper()
 
-        rhs = self.parse_expr(node.expr)
-        lhs_dtype = infer_type(lhs)
-        rhs_dtype = infer_type(rhs)
+        from loopy.kernel.data import ExpressionInstruction
 
-        # check for silent truncation of complex
-        if lhs_dtype.kind != 'c' and rhs_dtype.kind == 'c':
-            from pymbolic import var
-            rhs = var("real")(rhs)
-        # check for silent widening of real
-        if lhs_dtype.kind == 'c' and rhs_dtype.kind != 'c':
-            from pymbolic import var
-            rhs = var("fromreal")(rhs)
+        rhs = iname_alias_subst_map(self.parse_expr(node.expr))
 
-        return cgen.Assign(self.gen_expr(lhs), self.gen_expr(rhs))
+        new_id = "insn%d" % self.insn_id_counter
+        self.insn_id_counter += 1
+
+        if scope.previous_instruction_id:
+            insn_deps = frozenset([scope.previous_instruction_id])
+        else:
+            insn_deps = frozenset()
+
+        insn = ExpressionInstruction(
+                lhs, rhs,
+                forced_iname_deps=frozenset(
+                    scope.active_iname_aliases.itervalues()),
+                insn_deps=insn_deps,
+                id=new_id)
+
+        scope.previous_instruction_id = new_id
+        scope.instructions.append(insn)
 
     def map_Allocate(self, node):
         raise NotImplementedError("allocate")
@@ -329,32 +344,16 @@ class F2CLTranslator(FTreeWalkerBase):
     # {{{ control flow
 
     def map_Goto(self, node):
-        return cgen.Statement("goto label_%s" % node.label)
+        raise NotImplementedError("goto")
 
     def map_Call(self, node):
-        def transform_arg(i, arg_str):
-            expr = self.parse_expr(arg_str)
-            result = self.gen_expr(expr)
-            if self.arg_needs_pointer(node.designator, i):
-                result = "&"+result
-
-            cast = self.force_casts.get(
-                    (node.designator, i))
-            if cast is not None:
-                result = "(%s) (%s)" % (cast, result)
-
-            return result
-
-        return cgen.Statement("%s(%s)" % (
-            node.designator,
-            ", ".join(transform_arg(i, arg_str) 
-                for i, arg_str in enumerate(node.items))))
+        raise NotImplementedError("call")
 
     def map_Return(self, node):
-        return cgen.Statement("return")
+        raise NotImplementedError("return")
 
     def map_ArithmeticIf(self, node):
-        raise NotImplementedError
+        raise NotImplementedError("arithmetic-if")
 
     def map_If(self, node):
         raise NotImplementedError("if")
@@ -369,8 +368,6 @@ class F2CLTranslator(FTreeWalkerBase):
 
     def map_Do(self, node):
         scope = self.scope_stack[-1]
-
-        body = self.map_statement_list(node.content)
 
         if node.loopcontrol:
             loop_var, loop_bounds = node.loopcontrol.split("=")
@@ -387,29 +384,77 @@ class F2CLTranslator(FTreeWalkerBase):
                 raise RuntimeError("loop bounds not understood: %s"
                         % node.loopcontrol)
 
+            if step != 1:
+                raise NotImplementedError(
+                        "do loops with non-unit stride")
+
             if not isinstance(step, int):
                 print type(step)
-                raise TranslationError("non-constant steps not yet supported: %s" % step)
+                raise TranslationError(
+                        "non-constant steps not supported: %s" % step)
 
-            if step < 0:
-                comp_op = ">="
-            else:
-                comp_op = "<="
+            from loopy.symbolic import get_dependencies
+            loop_bound_deps = (
+                    get_dependencies(start)
+                    | get_dependencies(stop)
+                    | get_dependencies(step))
 
-            return cgen.For(
-                    "%s = %s" % (loop_var, self.gen_expr(start)),
-                    "%s %s %s" % (loop_var, comp_op, self.gen_expr(stop)),
-                    "%s += %s" % (loop_var, self.gen_expr(step)),
-                    cgen.block_if_necessary(body))
+            # {{{ find a usable loopy-side loop name
+
+            loopy_loop_var = loop_var
+            loop_var_suffix = None
+            while True:
+                already_used = False
+                for iset in scope.index_sets:
+                    if loopy_loop_var in iset.get_var_dict(dim_type.set):
+                        already_used = True
+                        break
+
+                if not already_used:
+                    break
+
+                if loop_var_suffix is None:
+                    loop_var_suffix = 0
+
+                loop_var_suffix += 1
+                loopy_loop_var = loop_var + "_%d" % loop_var_suffix
+
+            # }}}
+
+            space = isl.Space.create_from_names(self.isl_context,
+                    set=[loopy_loop_var], params=list(loop_bound_deps))
+
+            from loopy.isl_helpers import iname_rel_aff
+            from loopy.symbolic import aff_from_expr
+            index_set = (
+                    isl.BasicSet.universe(space)
+                    .add_constraint(
+                        isl.Constraint.inequality_from_aff(
+                            iname_rel_aff(space,
+                                loopy_loop_var, ">=",
+                                aff_from_expr(space, start))))
+                    .add_constraint(
+                        isl.Constraint.inequality_from_aff(
+                            iname_rel_aff(space,
+                                loopy_loop_var, "<=",
+                                aff_from_expr(space, stop)))))
+
+            scope.active_iname_aliases[loop_var] = loopy_loop_var
+            scope.index_sets.append(index_set)
+
+            for c in node.content:
+                self.rec(c)
+
+            del scope.active_iname_aliases[loop_var]
 
         else:
             raise NotImplementedError("unbounded do loop")
 
     def map_EndDo(self, node):
-        return []
+        pass
 
     def map_Continue(self, node):
-        return cgen.Statement("label_%s:" % node.label)
+        raise NotImplementedError("continue")
 
     def map_Stop(self, node):
         raise NotImplementedError("stop")
@@ -417,23 +462,50 @@ class F2CLTranslator(FTreeWalkerBase):
     def map_Comment(self, node):
         stripped_comment_line = node.content.strip()
 
-        scope = self.scope_stack[-1]
         if stripped_comment_line == "$loopy begin transform":
-            if scope.in_transform_code:
+            if self.in_transform_code:
                 raise TranslationError("can't enter transform code twice")
+            self.in_transform_code = True
 
         elif stripped_comment_line == "$loopy end transform":
-            if not scope.in_transform_code:
+            if not self.in_transform_code:
                 raise TranslationError("can't leave transform code twice")
+            self.in_transform_code = False
 
-        elif scope.in_transform_code:
-            scope.transform_code_lines.append(node.content)
+        elif self.in_transform_code:
+            self.transform_code_lines.append(node.content)
 
     # }}}
 
     # }}}
 
-    def make_kernel(self, target):
+    def make_kernels(self, target):
+        kernel_names = [
+                sub.subprogram_name
+                for sub in self.kernels]
+
+        proc_dict = {}
+        proc_dict["lp"] = lp
+        proc_dict["np"] = np
+
+        #import pudb
+        #pu.db
+        for sub in self.kernels:
+            knl = lp.make_kernel(target,
+                    sub.index_sets,
+                    sub.instructions,
+                    sub.arg_names,
+                    name=sub.subprogram_name)
+            proc_dict[sub.subprogram_name] = knl
+
+        transform_code = remove_common_indentation(
+                self.transform_code_lines)
+
+        exec(compile(transform_code,
+            "<loopy transforms>", "exec"), proc_dict)
+
+        return [proc_dict[knl_name]
+                for knl_name in kernel_names]
 
 # }}}
 

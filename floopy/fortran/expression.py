@@ -23,9 +23,14 @@ THE SOFTWARE.
 """
 
 from pymbolic.parser import Parser as ExpressionParserBase
+from floopy.fortran.diagnostic import TranslationError
 
+import pymbolic.primitives as prim
+import numpy as np
 
-# {{{ expression parser
+import pytools.lex
+import re
+
 
 _less_than = intern("less_than")
 _greater_than = intern("greater_than")
@@ -39,7 +44,7 @@ _and = intern("and")
 _or = intern("or")
 
 
-class TypedLiteral(pymbolic.primitives.Leaf):
+class TypedLiteral(prim.Leaf):
     def __init__(self, value, dtype):
         self.value = value
         self.dtype = np.dtype(dtype)
@@ -49,6 +54,8 @@ class TypedLiteral(pymbolic.primitives.Leaf):
 
     mapper_method = intern("map_literal")
 
+
+# {{{ expression parser
 
 class FortranExpressionParser(ExpressionParserBase):
     # FIXME double/single prec literals
@@ -159,14 +166,15 @@ class FortranExpressionParser(ExpressionParserBase):
                 _PREC_CALL, _PREC_COMPARISON, _openpar,
                 _PREC_LOGICAL_OR, _PREC_LOGICAL_AND)
         from pymbolic.primitives import (
-                ComparisonOperator, LogicalAnd, LogicalOr)
+                Comparison, LogicalAnd, LogicalOr)
 
         next_tag = pstate.next_tag()
         if next_tag is _openpar and _PREC_CALL > min_precedence:
             raise TranslationError("parenthesis operator only works on names")
+
         elif next_tag in self.COMP_MAP and _PREC_COMPARISON > min_precedence:
             pstate.advance()
-            left_exp = ComparisonOperator(
+            left_exp = Comparison(
                     left_exp,
                     self.COMP_MAP[next_tag],
                     self.parse_expression(pstate, _PREC_COMPARISON))
@@ -187,7 +195,10 @@ class FortranExpressionParser(ExpressionParserBase):
 
             if isinstance(left_exp, tuple) and min_precedence < self._PREC_FUNC_ARGS:
                 # this must be a complex literal
-                assert len(left_exp) == 2
+                if len(left_exp) != 2:
+                    raise TranslationError("complex literals must have "
+                            "two entries")
+
                 r, i = left_exp
 
                 dtype = (r.dtype.type(0) + i.dtype.type(0))
@@ -202,3 +213,4 @@ class FortranExpressionParser(ExpressionParserBase):
 
 # }}}
 
+# vim: foldmethod=marker
