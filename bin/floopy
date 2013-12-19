@@ -1,0 +1,80 @@
+#! /usr/bin/env python
+
+
+def main():
+    from optparse import OptionParser
+
+    description = "Stand-alone loopy frontend"
+
+    parser = OptionParser(description=description,
+            usage="%prog [options] INFILE OUTFILE")
+
+    parser.add_option("--lang", default="loopy")
+    parser.add_option("--target")
+    parser.add_option("--name")
+    options, args = parser.parse_args()
+
+    if len(args) != 2:
+        raise ValueError("need exactly two arguments")
+
+    infile, outfile = args
+
+    # {{{ set up target
+
+    if options.target is None:
+        raise ValueError("must specify target")
+
+    import re
+    CL_TARGET_RE = re.compile(r"^cl:([0-9]+),([0-9]+)$")
+
+    cl_target_re_match = CL_TARGET_RE.match(options.target)
+    if cl_target_re_match is not None:
+        platform_ordinal = int(cl_target_re_match.group(1))
+        device_ordinal = int(cl_target_re_match.group(2))
+
+        import pyopencl as cl
+        plat = cl.get_platforms()[platform_ordinal]
+        target = plat.get_devices()[device_ordinal]
+    else:
+        raise ValueError("target '%s' not understood"
+                % options.target)
+
+    # }}}
+
+    if options.lang == "loopy":
+        data_dic = {}
+        import loopy
+        import numpy
+        data_dic["lp"] = loopy
+        data_dic["np"] = numpy
+        data_dic["lp_target"] = target
+
+        with open(infile, "r") as infile_fd:
+            exec(compile(infile_fd.read(), infile, "exec"), data_dic)
+
+        try:
+            kernel = data_dic["lp_knl"]
+        except KeyError:
+            raise RuntimeError("loopy-lang requires 'lp_knl' "
+                    "to be defined on exit")
+    else:
+        raise RuntimeError("unknown language: '%s'"
+                % options.lang)
+
+    if options.name is not None:
+        kernel = kernel.copy(name=options.name)
+
+    new_args = [
+            loopy.GlobalArg("occa_info", numpy.int32, shape=None)
+            ] + kernel.args
+    kernel = kernel.copy(args=new_args)
+
+    from loopy.codegen import generate_code
+    code, impl_arg_info = generate_code(kernel)
+
+    with open(outfile, "w") as outfile_fd:
+        outfile_fd.write(code)
+
+
+if __name__ == "__main__":
+    main()
