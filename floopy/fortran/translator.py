@@ -88,10 +88,9 @@ class Scope(object):
         try:
             return self.type_map[name]
         except KeyError:
-
             if self.implicit_types is None:
                 raise TranslationError(
-                        "no type for '%s' found in implict none routine"
+                        "no type for '%s' found in 'implict none' routine"
                         % name)
 
             return self.implicit_types.get(name[0], np.dtype(np.int32))
@@ -186,6 +185,9 @@ class F2LoopyTranslator(FTreeWalkerBase):
             scope.implicit_types = None
 
         for stmt, specs in node.items:
+            if scope.implict_types is None:
+                raise TranslationError("implicit decl not allowed after "
+                        "'implicit none'")
             tp = self.dtype_from_stmt(stmt)
             for start, end in specs:
                 for char_code in range(ord(start), ord(end)+1):
@@ -491,10 +493,22 @@ class F2LoopyTranslator(FTreeWalkerBase):
         #import pudb
         #pu.db
         for sub in self.kernels:
+            args = []
+            for arg_name in sub.arg_names:
+                if arg_name in sub.dim_map:
+                    args.append(
+                            lp.GlobalArg(arg_name,
+                                dtype=sub.get_type(arg_name),
+                                shape=lp.auto))
+                else:
+                    args.append(
+                            lp.ValueArg(arg_name,
+                                dtype=sub.get_type(arg_name)))
+
             knl = lp.make_kernel(target,
                     sub.index_sets,
                     sub.instructions,
-                    sub.arg_names,
+                    args,
                     name=sub.subprogram_name)
             proc_dict[sub.subprogram_name] = knl
 
