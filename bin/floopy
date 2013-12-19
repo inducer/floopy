@@ -57,6 +57,14 @@ def main():
         except KeyError:
             raise RuntimeError("loopy-lang requires 'lp_knl' "
                     "to be defined on exit")
+
+    elif options.lang == "floopy":
+        with open(infile, "r") as infile_fd:
+            floopy_src = infile_fd.read()
+
+        from floopy.fortran import f2loopy
+        kernel = f2loopy(target, floopy_src)
+
     else:
         raise RuntimeError("unknown language: '%s'"
                 % options.lang)

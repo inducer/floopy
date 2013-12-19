@@ -22,6 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 
+from pymbolic.parser import Parser as ExpressionParserBase
+
 
 # {{{ expression parser
 

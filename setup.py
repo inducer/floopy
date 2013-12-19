@@ -7,7 +7,7 @@ def main():
 
     setup(name="floopy",
           version="2013.1",
-          description="An AJAXy notes manager",
+          description="Stand-alone loopy frontend",
           #long_description=open("README.rst", "rt").read(),
           author=u"Andreas Kloeckner",
           author_email="inform@tiker.net",
@@ -17,6 +17,7 @@ def main():
           scripts=["bin/floopy"],
           packages=[
                   "floopy",
+                  "floopy.fortran",
                   ],
           )
 

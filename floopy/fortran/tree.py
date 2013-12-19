@@ -26,69 +26,8 @@ from floopy.fortran.diagnostic import TranslationError
 import numpy as np
 
 
-class Scope(object):
-    def __init__(self, subprogram_name, arg_names=set()):
-        self.subprogram_name = subprogram_name
-
-        # map name to data
-        self.data_statements = {}
-
-        # map first letter to type
-        self.implicit_types = {}
-
-        # map name to dim tuple
-        self.dim_map = {}
-
-        # map name to dim tuple
-        self.type_map = {}
-
-        # map name to data
-        self.data = {}
-
-        self.arg_names = arg_names
-
-        self.used_names = set()
-
-    def known_names(self):
-        return (self.used_names
-                | set(self.dim_map.iterkeys())
-                | set(self.type_map.iterkeys()))
-
-    def is_known(self, name):
-        return (name in self.used_names
-                or name in self.dim_map
-                or name in self.type_map)
-
-    def use_name(self, name):
-        self.used_names.add(name)
-
-    def get_type(self, name):
-        try:
-            return self.type_map[name]
-        except KeyError:
-
-            if self.implicit_types is None:
-                raise TranslationError(
-                        "no type for '%s' found in implict none routine"
-                        % name)
-
-            return self.implicit_types.get(name[0], np.dtype(np.int32))
-
-    def get_shape(self, name):
-        return self.dim_map.get(name, ())
-
-    def translate_var_name(self, name):
-        shape = self.dim_map.get(name)
-        if name in self.data and shape is not None:
-            return "%s_%s" % (self.subprogram_name, name)
-        else:
-            return name
-
-
 class FTreeWalkerBase(object):
     def __init__(self):
-        self.scope_stack = []
-
         self.expr_parser = FortranExpressionParser(self)
 
     def rec(self, expr, *args, **kwargs):
@@ -147,4 +86,4 @@ class FTreeWalkerBase(object):
 
     # }}}
 
-
+# vim: foldmethod=marker
