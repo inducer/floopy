@@ -25,22 +25,8 @@ THE SOFTWARE.
 import cgen
 import numpy as np
 import re
-from pymbolic.parser import Parser as ExpressionParserBase
 from pymbolic.mapper import CombineMapper
-import pymbolic.primitives
 from pymbolic.mapper.c_code import CCodeMapper as CCodeMapperBase
-
-from warnings import warn
-
-import pytools.lex
-
-
-class TranslatorWarning(UserWarning):
-    pass
-
-
-class TranslationError(RuntimeError):
-    pass
 
 
 # {{{ AST components
@@ -83,7 +69,6 @@ class POD(cgen.POD):
         return [dtype_to_ctype(self.dtype)], self.name
 
 # }}}
-
 
 
 # {{{ expression generator
@@ -345,136 +330,6 @@ class CCodeMapper(ComplexCCodeMapper):
 
 # }}}
 
-class Scope(object):
-    def __init__(self, subprogram_name, arg_names=set()):
-        self.subprogram_name = subprogram_name
-
-        # map name to data
-        self.data_statements = {}
-
-        # map first letter to type
-        self.implicit_types = {}
-
-        # map name to dim tuple
-        self.dim_map = {}
-
-        # map name to dim tuple
-        self.type_map = {}
-
-        # map name to data
-        self.data = {}
-
-        self.arg_names = arg_names
-
-        self.used_names = set()
-
-        self.type_inf_mapper = None
-
-    def known_names(self):
-        return (self.used_names
-                | set(self.dim_map.iterkeys())
-                | set(self.type_map.iterkeys()))
-
-    def is_known(self, name):
-        return (name in self.used_names
-                or name in self.dim_map
-                or name in self.type_map)
-
-    def use_name(self, name):
-        self.used_names.add(name)
-
-    def get_type(self, name):
-        try:
-            return self.type_map[name]
-        except KeyError:
-
-            if self.implicit_types is None:
-                raise TranslationError(
-                        "no type for '%s' found in implict none routine"
-                        % name)
-
-            return self.implicit_types.get(name[0], np.dtype(np.int32))
-
-    def get_shape(self, name):
-        return self.dim_map.get(name, ())
-
-    def get_type_inference_mapper(self):
-        if self.type_inf_mapper is None:
-            self.type_inf_mapper = TypeInferenceMapper(self)
-
-        return self.type_inf_mapper
-
-    def translate_var_name(self, name):
-        shape = self.dim_map.get(name)
-        if name in self.data and shape is not None:
-            return "%s_%s" % (self.subprogram_name, name)
-        else:
-            return name
-
-
-class FTreeWalkerBase(object):
-    def __init__(self):
-        self.scope_stack = []
-
-        self.expr_parser = FortranExpressionParser(self)
-
-    def rec(self, expr, *args, **kwargs):
-        mro = list(type(expr).__mro__)
-        dispatch_class = kwargs.pop("dispatch_class", type(self))
-
-        while mro:
-            method_name = "map_"+mro.pop(0).__name__
-
-            try:
-                method = getattr(dispatch_class, method_name)
-            except AttributeError:
-                pass
-            else:
-                return method(self, expr, *args, **kwargs)
-
-        raise NotImplementedError(
-                "%s does not know how to map type '%s'"
-                % (type(self).__name__,
-                    type(expr)))
-
-    ENTITY_RE = re.compile(
-            r"^(?P<name>[_0-9a-zA-Z]+)"
-            "(\((?P<shape>[-+*0-9:a-zA-Z,]+)\))?$")
-
-    def parse_dimension_specs(self, dim_decls):
-        def parse_bounds(bounds_str):
-            start_end = bounds_str.split(":")
-
-            assert 1 <= len(start_end) <= 2
-
-            return (self.parse_expr(s) for s in start_end)
-
-        for decl in dim_decls:
-            entity_match = self.ENTITY_RE.match(decl)
-            assert entity_match
-
-            groups = entity_match.groupdict()
-            name = groups["name"]
-            assert name
-
-            if groups["shape"]:
-                shape = [parse_bounds(s) for s in groups["shape"].split(",")]
-            else:
-                shape = None
-
-            yield name, shape
-
-    def __call__(self, expr, *args, **kwargs):
-        return self.rec(expr, *args, **kwargs)
-
-    # {{{ expressions
-
-    def parse_expr(self, expr_str):
-        return self.expr_parser(expr_str)
-
-    # }}}
-
-
 class ArgumentAnalayzer(FTreeWalkerBase):
     def __init__(self):
         FTreeWalkerBase.__init__(self)
@@ -681,72 +536,21 @@ class ArgumentAnalayzer(FTreeWalkerBase):
     # }}}
 
 
-def f2cl(source, free_form=False, strict=True,
-        addr_space_hints={}, force_casts={},
-        do_arg_analysis=True,
-        use_restrict_pointers=False,
-        try_compile=False):
+class F2LoopyTranslator(FTreeWalkerBase):
+    pass
+
+
+def f2loopy(source, free_form=False, strict=True):
     from fparser import api
     tree = api.parse(source, isfree=free_form, isstrict=strict,
             analyze=False, ignore_comments=False)
 
     arg_info = ArgumentAnalayzer()
-    if do_arg_analysis:
-        arg_info(tree)
+    arg_info(tree)
 
-    source = F2CLTranslator(addr_space_hints, force_casts,
-            arg_info, use_restrict_pointers=use_restrict_pointers)(tree)
+    f2loopy = F2LoopyTranslator()
+    f2loopy(tree)
 
-    func_decls = []
-    for entry in source:
-        if isinstance(entry, cgen.FunctionBody):
-            func_decls.append(entry.fdecl)
-
-    mod = cgen.Module(func_decls + [cgen.Line()] + source)
-
-    #open("pre-cnd.cl", "w").write(str(mod))
-
-    from cnd import transform_cl
-    str_mod = transform_cl(str(mod))
-
-    if try_compile:
-        import pyopencl as cl
-        ctx = cl.create_some_context()
-        cl.Program(ctx, """
-            #pragma OPENCL EXTENSION cl_khr_fp64: enable
-            #include <pyopencl-complex.h>
-            """).build()
-    return str_mod
-
-
-def f2cl_files(source_file, target_file, **kwargs):
-    mod = f2cl(open(source_file).read(), **kwargs)
-    open(target_file, "w").write(mod)
-
-
-if __name__ == "__main__":
-    from cgen.opencl import CLConstant
-
-    if 0:
-        f2cl_files("hank107.f", "hank107.cl",
-                addr_space_hints={
-                    ("hank107p", "p"): CLConstant,
-                    ("hank107pc", "p"): CLConstant,
-                    },
-                force_casts={
-                    ("hank107p", 0): "__constant cdouble_t *",
-                    })
-
-        f2cl_files("cdjseval2d.f", "cdjseval2d.cl")
-
-    f2cl_files("hank103.f", "hank103.cl",
-            addr_space_hints={
-                ("hank103p", "p"): CLConstant,
-                ("hank103pc", "p"): CLConstant,
-                },
-            force_casts={
-                ("hank103p", 0): "__constant cdouble_t *",
-                },
-            try_compile=True)
+    1/0
 
 # vim: foldmethod=marker
