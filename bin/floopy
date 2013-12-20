@@ -15,6 +15,7 @@ def main():
     parser.add_option("--lang", default="loopy")
     parser.add_option("--target")
     parser.add_option("--name")
+    parser.add_option("--transform")
     options, args = parser.parse_args()
 
     if len(args) != 2:
@@ -53,6 +54,11 @@ def main():
         with open(infile, "r") as infile_fd:
             exec(compile(infile_fd.read(), infile, "exec"), data_dic)
 
+        if options.transform:
+            with open(options.transform, "r") as xform_fd:
+                exec(compile(xform_fd.read(),
+                    options.transform, "exec"), data_dic)
+
         try:
             kernel = data_dic["lp_knl"]
         except KeyError:
@@ -70,6 +76,29 @@ def main():
 
         from floopy.fortran import f2loopy
         kernels = f2loopy(target, floopy_src)
+
+        # {{{ apply transforms from command line
+
+        if options.transform:
+            xform_dict = {}
+            xform_dict["lp"] = lp
+            xform_dict["np"] = np
+
+            for kernel in kernels:
+                xform_dict[kernel.name] = kernel
+
+            with open(options.transform, "r") as xform_fd:
+                exec(compile(xform_fd.read(),
+                    options.transform, "exec"), xform_dict)
+
+            new_kernels = []
+            for kernel in kernels:
+                new_kernels.append(xform_dict[kernel.name])
+
+            kernels = new_kernels
+            del new_kernels
+
+        # }}}
 
         if options.name is not None:
             kernels = [kernel for kernel in kernels

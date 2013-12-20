@@ -30,6 +30,46 @@ from floopy.fortran.diagnostic import (
         TranslationError, TranslatorWarning)
 import islpy as isl
 from islpy import dim_type
+from loopy.symbolic import IdentityMapper
+
+
+# {{{ subscript base shifter
+
+class SubscriptIndexBaseShifter(IdentityMapper):
+    def __init__(self, scope):
+        self.scope = scope
+
+    def map_subscript(self, expr):
+        from pymbolic.primitives import Variable
+        assert isinstance(expr.aggregate, Variable)
+
+        name = expr.aggregate.name
+        dims = self.scope.dim_map.get(name)
+        if dims is None:
+            return IdentityMapper.map_subscript(self, expr)
+
+        subscript = expr.index
+
+        if not isinstance(subscript, tuple):
+            subscript = (subscript,)
+
+        subscript = list(subscript)
+
+        if len(dims) != len(subscript):
+            raise TranslationError("inconsistent number of indices "
+                    "to '%s'" % name)
+
+        for i in xrange(len(dims)):
+            if len(dims[i]) == 2:
+                # has a base index
+                subscript[i] -= dims[i][0]
+            elif len(dims[i]) == 1:
+                # base index is 1 implicitly
+                subscript[i] -= 1
+
+        return expr.aggregate[self.rec(tuple(subscript))]
+
+# }}}
 
 
 # {{{ scope
@@ -59,9 +99,12 @@ class Scope(object):
 
         # This dict has a key for every iname that is
         # currently active. These keys map to the loopy-side
-        # name of the iname, which may differ because
+        # expression for the iname, which may differ because
+        # of non-zero lower iteration bounds or because of
         # duplicate inames need to be renamed for loopy.
         self.active_iname_aliases = {}
+
+        self.active_loopy_inames = set()
 
         self.instructions = []
         self.temporary_variables = []
@@ -81,42 +124,67 @@ class Scope(object):
                 or name in self.type_map
                 or name in self.arg_names)
 
+    def all_inames(self):
+        result = set()
+        for iset in self.index_sets:
+            result.update(iset.get_var_dict(dim_type.set))
+
+        return frozenset(result)
+
     def use_name(self, name):
         self.used_names.add(name)
 
-    def get_type(self, name):
+    def get_type(self, name, none_ok=False):
         try:
             return self.type_map[name]
         except KeyError:
             if self.implicit_types is None:
+                if none_ok:
+                    return None
+
                 raise TranslationError(
                         "no type for '%s' found in 'implict none' routine"
                         % name)
 
             return self.implicit_types.get(name[0], np.dtype(np.int32))
 
-    def get_shape(self, name):
-        return self.dim_map.get(name, ())
+    def get_loopy_shape(self, name):
+        dims = self.dim_map.get(name, ())
 
-    def get_iname_alias_subst_mapper(self):
+        shape = []
+        for i, dim in enumerate(dims):
+            if len(dim) == 1:
+                shape.append(dim[0])
+            elif len(dim) == 2:
+                shape.append(dim[1]-dim[0]+1)
+            else:
+                raise TranslationError("dimension axis %d "
+                        "of '%s' not understood: %s"
+                        % (i, name, dim))
+
+        return tuple(shape)
+
+    def process_expression_for_loopy(self, expr):
         from pymbolic.mapper.substitutor import make_subst_func
         from loopy.symbolic import SubstitutionMapper
 
-        from pymbolic import var
-        iname_aliases_with_vars = dict(
-                (iname, var(alias))
-                for iname, alias in self.active_iname_aliases.iteritems())
+        submap = SubstitutionMapper(
+                make_subst_func(self.active_iname_aliases))
 
-        return SubstitutionMapper(
-                make_subst_func(iname_aliases_with_vars))
+        expr = submap(expr)
+
+        subshift = SubscriptIndexBaseShifter(self)
+        expr = subshift(expr)
+
+        return expr
 
 # }}}
 
 
 def remove_common_indentation(lines):
-    while lines[0].strip() == "":
+    while lines and lines[0].strip() == "":
         lines.pop(0)
-    while lines[-1].strip() == "":
+    while lines and lines[-1].strip() == "":
         lines.pop(-1)
 
     if lines:
@@ -149,7 +217,6 @@ class F2LoopyTranslator(FTreeWalkerBase):
         self.in_transform_code = False
 
         self.transform_code_lines = []
-
 
     # {{{ map_XXX functions
 
@@ -291,8 +358,8 @@ class F2LoopyTranslator(FTreeWalkerBase):
     def map_Assignment(self, node):
         scope = self.scope_stack[-1]
 
-        iname_alias_subst_map = scope.get_iname_alias_subst_mapper()
-        lhs = iname_alias_subst_map(self.parse_expr(node.variable))
+        lhs = scope.process_expression_for_loopy(
+                self.parse_expr(node.variable))
         from pymbolic.primitives import Subscript
         if isinstance(lhs, Subscript):
             lhs_name = lhs.aggregate.name
@@ -303,7 +370,7 @@ class F2LoopyTranslator(FTreeWalkerBase):
 
         from loopy.kernel.data import ExpressionInstruction
 
-        rhs = iname_alias_subst_map(self.parse_expr(node.expr))
+        rhs = scope.process_expression_for_loopy(self.parse_expr(node.expr))
 
         new_id = "insn%d" % self.insn_id_counter
         self.insn_id_counter += 1
@@ -316,7 +383,7 @@ class F2LoopyTranslator(FTreeWalkerBase):
         insn = ExpressionInstruction(
                 lhs, rhs,
                 forced_iname_deps=frozenset(
-                    scope.active_iname_aliases.itervalues()),
+                    scope.active_loopy_inames),
                 insn_deps=insn_deps,
                 id=new_id)
 
@@ -434,20 +501,25 @@ class F2LoopyTranslator(FTreeWalkerBase):
                         isl.Constraint.inequality_from_aff(
                             iname_rel_aff(space,
                                 loopy_loop_var, ">=",
-                                aff_from_expr(space, start))))
+                                aff_from_expr(space, 0))))
                     .add_constraint(
                         isl.Constraint.inequality_from_aff(
                             iname_rel_aff(space,
                                 loopy_loop_var, "<=",
-                                aff_from_expr(space, stop)))))
+                                aff_from_expr(space, stop-start)))))
 
-            scope.active_iname_aliases[loop_var] = loopy_loop_var
+            from pymbolic import var
+            scope.active_iname_aliases[loop_var] = \
+                    var(loopy_loop_var) + start
+            scope.active_loopy_inames.add(loopy_loop_var)
+
             scope.index_sets.append(index_set)
 
             for c in node.content:
                 self.rec(c)
 
             del scope.active_iname_aliases[loop_var]
+            scope.active_loopy_inames.remove(loopy_loop_var)
 
         else:
             raise NotImplementedError("unbounded do loop")
@@ -493,23 +565,48 @@ class F2LoopyTranslator(FTreeWalkerBase):
         #import pudb
         #pu.db
         for sub in self.kernels:
-            args = []
+            # {{{ figure out arguments
+
+            kernel_data = []
             for arg_name in sub.arg_names:
-                if arg_name in sub.dim_map:
-                    args.append(
+                dims = sub.dim_map.get(arg_name)
+
+                if dims is not None:
+                    kernel_data.append(
                             lp.GlobalArg(arg_name,
                                 dtype=sub.get_type(arg_name),
-                                shape=lp.auto))
+                                shape=sub.get_loopy_shape(arg_name),
+                                order="F"))
                 else:
-                    args.append(
+                    kernel_data.append(
                             lp.ValueArg(arg_name,
                                 dtype=sub.get_type(arg_name)))
+
+            # }}}
+
+            # {{{ figure out temporary variables
+
+            for var_name in (
+                    sub.known_names()
+                    - set(sub.arg_names)
+                    - sub.all_inames()):
+                dtype = sub.get_type(var_name, none_ok=True)
+                if sub.implicit_types is None and dtype is None:
+                    continue
+
+                kernel_data.append(
+                        lp.TemporaryVariable(
+                            var_name, dtype=dtype,
+                            shape=sub.get_loopy_shape(var_name)))
+
+            # }}}
 
             knl = lp.make_kernel(target,
                     sub.index_sets,
                     sub.instructions,
-                    args,
+                    kernel_data,
                     name=sub.subprogram_name)
+
             proc_dict[sub.subprogram_name] = knl
 
         transform_code = remove_common_indentation(
