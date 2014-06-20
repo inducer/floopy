@@ -553,7 +553,7 @@ class F2LoopyTranslator(FTreeWalkerBase):
 
     # }}}
 
-    def make_kernels(self, target):
+    def make_kernels(self, target, pre_transform_code=None):
         kernel_names = [
                 sub.subprogram_name
                 for sub in self.kernels]
@@ -562,8 +562,6 @@ class F2LoopyTranslator(FTreeWalkerBase):
         proc_dict["lp"] = lp
         proc_dict["np"] = np
 
-        #import pudb
-        #pu.db
         for sub in self.kernels:
             # {{{ figure out arguments
 
@@ -611,6 +609,10 @@ class F2LoopyTranslator(FTreeWalkerBase):
 
         transform_code = remove_common_indentation(
                 self.transform_code_lines)
+
+        if pre_transform_code is not None:
+            exec(compile(pre_transform_code,
+                "<loopy transforms>", "exec"), proc_dict)
 
         exec(compile(transform_code,
             "<loopy transforms>", "exec"), proc_dict)

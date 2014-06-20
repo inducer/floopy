@@ -74,31 +74,14 @@ def main():
         with open(infile, "r") as infile_fd:
             floopy_src = infile_fd.read()
 
-        from floopy.fortran import f2loopy
-        kernels = f2loopy(target, floopy_src)
-
-        # {{{ apply transforms from command line
-
+        pre_transform_code = None
         if options.transform:
-            xform_dict = {}
-            xform_dict["lp"] = lp
-            xform_dict["np"] = np
-
-            for kernel in kernels:
-                xform_dict[kernel.name] = kernel
-
             with open(options.transform, "r") as xform_fd:
-                exec(compile(xform_fd.read(),
-                    options.transform, "exec"), xform_dict)
+                pre_transform_code = xform_fd.read()
 
-            new_kernels = []
-            for kernel in kernels:
-                new_kernels.append(xform_dict[kernel.name])
-
-            kernels = new_kernels
-            del new_kernels
-
-        # }}}
+        from floopy.fortran import f2loopy
+        kernels = f2loopy(target, floopy_src,
+                pre_transform_code=pre_transform_code)
 
         if options.name is not None:
             kernels = [kernel for kernel in kernels
@@ -121,6 +104,9 @@ def main():
 
     kernels = new_kernels
     del new_kernels
+
+    import pudb
+    pu.db
 
     codes = []
     from loopy.codegen import generate_code

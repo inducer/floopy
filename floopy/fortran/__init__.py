@@ -23,18 +23,17 @@ THE SOFTWARE.
 """
 
 
-def f2loopy(target, source, free_form=True, strict=True):
+def f2loopy(target, source, free_form=True, strict=True,
+        pre_transform_code=None):
     from fparser import api
     tree = api.parse(source, isfree=free_form, isstrict=strict,
             analyze=False, ignore_comments=False)
-
-    #arg_info = ArgumentAnalayzer()
-    #arg_info(tree)
 
     from floopy.fortran.translator import F2LoopyTranslator
     f2loopy = F2LoopyTranslator()
     f2loopy(tree)
 
-    return f2loopy.make_kernels(target)
+    return f2loopy.make_kernels(target,
+            pre_transform_code=pre_transform_code)
 
 # vim: foldmethod=marker
