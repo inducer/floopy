@@ -1,5 +1,7 @@
 #! /usr/bin/env python
 
+import sys
+
 import loopy as lp
 import numpy as np
 
@@ -45,6 +47,12 @@ def main():
 
     # }}}
 
+    if infile == "-":
+        infile_content = sys.stdin.read()
+    else:
+        with open(infile, "r") as infile_fd:
+            infile_content = infile_fd.read()
+
     if options.lang == "loopy":
         data_dic = {}
         data_dic["lp"] = lp
@@ -52,7 +60,7 @@ def main():
         data_dic["lp_target"] = target
 
         with open(infile, "r") as infile_fd:
-            exec(compile(infile_fd.read(), infile, "exec"), data_dic)
+            exec(compile(infile_content, infile, "exec"), data_dic)
 
         if options.transform:
             with open(options.transform, "r") as xform_fd:
@@ -71,16 +79,13 @@ def main():
         kernels = [kernel]
 
     elif options.lang == "floopy":
-        with open(infile, "r") as infile_fd:
-            floopy_src = infile_fd.read()
-
         pre_transform_code = None
         if options.transform:
             with open(options.transform, "r") as xform_fd:
                 pre_transform_code = xform_fd.read()
 
         from floopy.fortran import f2loopy
-        kernels = f2loopy(target, floopy_src,
+        kernels = f2loopy(target, infile_content,
                 pre_transform_code=pre_transform_code)
 
         if options.name is not None:
@@ -105,17 +110,18 @@ def main():
     kernels = new_kernels
     del new_kernels
 
-    import pudb
-    pu.db
-
     codes = []
     from loopy.codegen import generate_code
     for kernel in kernels:
+        kernel = lp.preprocess_kernel(kernel)
         code, impl_arg_info = generate_code(kernel)
         codes.append(code)
 
-    with open(outfile, "w") as outfile_fd:
-        outfile_fd.write("\n\n".join(codes))
+    if outfile == "-":
+        sys.stdout.write("\n\n".join(codes))
+    else:
+        with open(outfile, "w") as outfile_fd:
+            outfile_fd.write("\n\n".join(codes))
 
 
 if __name__ == "__main__":

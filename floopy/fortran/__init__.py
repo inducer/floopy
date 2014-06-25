@@ -33,7 +33,6 @@ def f2loopy(target, source, free_form=True, strict=True,
     f2loopy = F2LoopyTranslator()
     f2loopy(tree)
 
-    return f2loopy.make_kernels(target,
-            pre_transform_code=pre_transform_code)
+    return f2loopy.make_kernels(pre_transform_code=pre_transform_code)
 
 # vim: foldmethod=marker

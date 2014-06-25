@@ -14,6 +14,9 @@ def main():
           license="MIT",
           zip_safe=False,
 
+          install_requires=[
+              "loopy",
+              ],
           scripts=["bin/floopy"],
           packages=[
                   "floopy",

@@ -553,7 +553,7 @@ class F2LoopyTranslator(FTreeWalkerBase):
 
     # }}}
 
-    def make_kernels(self, target, pre_transform_code=None):
+    def make_kernels(self, pre_transform_code=None):
         kernel_names = [
                 sub.subprogram_name
                 for sub in self.kernels]
@@ -599,7 +599,7 @@ class F2LoopyTranslator(FTreeWalkerBase):
 
             # }}}
 
-            knl = lp.make_kernel(target,
+            knl = lp.make_kernel(
                     sub.index_sets,
                     sub.instructions,
                     kernel_data,
