@@ -51,3 +51,4 @@ core
 _build
 **/.occa/*.cl
 **/.occa/*.occa
+f2py-*
