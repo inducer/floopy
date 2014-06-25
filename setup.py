@@ -15,7 +15,7 @@ def main():
           zip_safe=False,
 
           install_requires=[
-              "loopy",
+              "loo.py",
               ],
           scripts=["bin/floopy"],
           packages=[
