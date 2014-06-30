@@ -570,11 +570,12 @@ class F2LoopyTranslator(FTreeWalkerBase):
                 dims = sub.dim_map.get(arg_name)
 
                 if dims is not None:
+                    # default order is set to "F" in kernel creation below
                     kernel_data.append(
                             lp.GlobalArg(arg_name,
                                 dtype=sub.get_type(arg_name),
                                 shape=sub.get_loopy_shape(arg_name),
-                                order="F"))
+                                ))
                 else:
                     kernel_data.append(
                             lp.ValueArg(arg_name,
@@ -603,7 +604,9 @@ class F2LoopyTranslator(FTreeWalkerBase):
                     sub.index_sets,
                     sub.instructions,
                     kernel_data,
-                    name=sub.subprogram_name)
+                    name=sub.subprogram_name,
+                    default_order="F"
+                    )
 
             proc_dict[sub.subprogram_name] = knl
 

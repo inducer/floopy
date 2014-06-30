@@ -19,3 +19,4 @@ end
 ! fill = lp.split_iname(fill, "i_1", 128,
 !     outer_tag="g.0", inner_tag="l.0")
 !$loopy end transform
+! vim:filetype=floopy
