@@ -360,8 +360,11 @@ class F2LoopyTranslator(FTreeWalkerBase):
 
         lhs = scope.process_expression_for_loopy(
                 self.parse_expr(node.variable))
-        from pymbolic.primitives import Subscript
-        if isinstance(lhs, Subscript):
+        from pymbolic.primitives import Subscript, Call
+        if isinstance(lhs, Call):
+            raise TranslationError("function call (to '%s') on left hand side of"
+                    "assignment--check for misspelled variable name" % lhs)
+        elif isinstance(lhs, Subscript):
             lhs_name = lhs.aggregate.name
         else:
             lhs_name = lhs.name
@@ -572,7 +575,8 @@ class F2LoopyTranslator(FTreeWalkerBase):
                 if dims is not None:
                     # default order is set to "F" in kernel creation below
                     kernel_data.append(
-                            lp.GlobalArg(arg_name,
+                            lp.GlobalArg(
+                                arg_name,
                                 dtype=sub.get_type(arg_name),
                                 shape=sub.get_loopy_shape(arg_name),
                                 ))
