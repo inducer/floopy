@@ -51,7 +51,7 @@ class FTreeWalkerBase(object):
 
     ENTITY_RE = re.compile(
             r"^(?P<name>[_0-9a-zA-Z]+)"
-            "(\((?P<shape>[-+*0-9:a-zA-Z,]+)\))?$")
+            "(\((?P<shape>[-+*0-9:a-zA-Z, \t]+)\))?$")
 
     def parse_dimension_specs(self, dim_decls):
         def parse_bounds(bounds_str):
