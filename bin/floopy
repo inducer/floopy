@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+from __future__ import print_function
 
 import sys
 
@@ -18,6 +19,7 @@ def main():
     parser.add_option("--target")
     parser.add_option("--name")
     parser.add_option("--transform")
+    parser.add_option("--print-ir", action="store_true")
     options, args = parser.parse_args()
 
     if len(args) != 2:
@@ -99,6 +101,10 @@ def main():
     else:
         raise RuntimeError("unknown language: '%s'"
                 % options.lang)
+
+    if options.print_ir:
+        for kernel in kernels:
+            print(kernel, file=sys.stderr)
 
     codes = []
     from loopy.codegen import generate_code

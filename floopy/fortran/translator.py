@@ -22,6 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 
+import re
+
 import loopy as lp
 import numpy as np
 from warnings import warn
@@ -216,6 +218,8 @@ class F2LoopyTranslator(FTreeWalkerBase):
         # has been seen.
         self.in_transform_code = False
 
+        self.instruction_tags = []
+
         self.transform_code_lines = []
 
     # {{{ map_XXX functions
@@ -388,7 +392,8 @@ class F2LoopyTranslator(FTreeWalkerBase):
                 forced_iname_deps=frozenset(
                     scope.active_loopy_inames),
                 insn_deps=insn_deps,
-                id=new_id)
+                id=new_id,
+                tags=tuple(self.instruction_tags))
 
         scope.previous_instruction_id = new_id
         scope.instructions.append(insn)
@@ -536,8 +541,14 @@ class F2LoopyTranslator(FTreeWalkerBase):
     def map_Stop(self, node):
         raise NotImplementedError("stop")
 
+    begin_tag_re = re.compile(r"\$loopy begin tagged:\s*(.*?)\s*$")
+    end_tag_re = re.compile(r"\$loopy end tagged:\s*(.*?)\s*$")
+
     def map_Comment(self, node):
         stripped_comment_line = node.content.strip()
+
+        begin_tag_match = self.begin_tag_re.match(stripped_comment_line)
+        end_tag_match = self.end_tag_re.match(stripped_comment_line)
 
         if stripped_comment_line == "$loopy begin transform":
             if self.in_transform_code:
@@ -548,6 +559,19 @@ class F2LoopyTranslator(FTreeWalkerBase):
             if not self.in_transform_code:
                 raise TranslationError("can't leave transform code twice")
             self.in_transform_code = False
+
+        elif begin_tag_match:
+            tag = begin_tag_match.group(1)
+            if tag in self.instruction_tags:
+                raise TranslationError("nested begin tag for tag '%s'" % tag)
+            self.instruction_tags.append(tag)
+
+        elif end_tag_match:
+            tag = end_tag_match.group(1)
+            if tag not in self.instruction_tags:
+                raise TranslationError(
+                        "end tag without begin tag for tag '%s'" % tag)
+            self.instruction_tags.remove(tag)
 
         elif self.in_transform_code:
             self.transform_code_lines.append(node.content)
