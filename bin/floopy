@@ -7,6 +7,26 @@ import loopy as lp
 import numpy as np
 
 
+def to_python_literal(value):
+    try:
+        int(value)
+    except ValueError:
+        pass
+    else:
+        # It's an integer
+        return value
+
+    try:
+        float(value)
+    except ValueError:
+        pass
+    else:
+        # It's a float
+        return repr(float(value))
+
+    return repr(value)
+
+
 def defines_to_python_code(defines_str):
     import re
     DEFINE_RE = re.compile(r"^\#define\s+([a-zA-Z0-9_]+)\s+(.*)$")
@@ -19,7 +39,7 @@ def defines_to_python_code(defines_str):
         if match is None:
             raise RuntimeError("#define not understood: '%s'" % l)
 
-        result.append("%s = %s" % (match.group(1), match.group(2)))
+        result.append("%s = %s" % (match.group(1), to_python_literal(match.group(2))))
 
     return "\n".join(result)
 
