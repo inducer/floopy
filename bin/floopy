@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+from __future__ import print_function
 
 import sys
 
@@ -38,6 +39,7 @@ def main():
     parser.add_argument("--name")
     parser.add_argument("--transform")
     parser.add_argument("--occa-defines")
+    parser.add_argument("--print-ir", action="store_true")
     args = parser.parse_args()
 
     # {{{ set up target
@@ -128,6 +130,10 @@ def main():
     else:
         raise RuntimeError("unknown language: '%s'"
                 % args.lang)
+
+    if args.print_ir:
+        for kernel in kernels:
+            print(kernel, file=sys.stderr)
 
     codes = []
     from loopy.codegen import generate_code
