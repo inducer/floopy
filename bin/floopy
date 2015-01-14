@@ -152,6 +152,16 @@ def main():
         for kernel in kernels:
             print(kernel, file=sys.stderr)
 
+    new_kernels = []
+    for kernel in kernels:
+        new_args = [
+                lp.GlobalArg("occa_info", np.int32, shape=None)
+                ] + kernel.args
+        new_kernels.append(kernel.copy(args=new_args))
+
+    kernels = new_kernels
+    del new_kernels
+
     codes = []
     from loopy.codegen import generate_code
     for kernel in kernels:
