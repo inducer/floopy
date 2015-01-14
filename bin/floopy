@@ -39,7 +39,8 @@ def defines_to_python_code(defines_str):
         if match is None:
             raise RuntimeError("#define not understood: '%s'" % l)
 
-        result.append("%s = %s" % (match.group(1), to_python_literal(match.group(2))))
+        result.append(
+                "%s = %s" % (match.group(1), to_python_literal(match.group(2))))
 
     return "\n".join(result)
 
@@ -56,6 +57,7 @@ def main():
     parser.add_argument("--name")
     parser.add_argument("--transform")
     parser.add_argument("--occa-defines")
+    parser.add_argument("--occa-add-dummy-arg", action="store_true")
     parser.add_argument("--print-ir", action="store_true")
     args = parser.parse_args()
 
@@ -152,15 +154,16 @@ def main():
         for kernel in kernels:
             print(kernel, file=sys.stderr)
 
-    new_kernels = []
-    for kernel in kernels:
-        new_args = [
-                lp.GlobalArg("occa_info", np.int32, shape=None)
-                ] + kernel.args
-        new_kernels.append(kernel.copy(args=new_args))
+    if args.occa_add_dummy_arg:
+        new_kernels = []
+        for kernel in kernels:
+            new_args = [
+                    lp.GlobalArg("occa_info", np.int32, shape=None)
+                    ] + kernel.args
+            new_kernels.append(kernel.copy(args=new_args))
 
-    kernels = new_kernels
-    del new_kernels
+        kernels = new_kernels
+        del new_kernels
 
     codes = []
     from loopy.codegen import generate_code
