@@ -27,10 +27,7 @@ def defines_to_python_code(defines_str):
 def main():
     from argparse import ArgumentParser
 
-    description = "Stand-alone loopy frontend"
-
-    parser = ArgumentParser(description=description,
-            usage="%prog [options] INFILE OUTFILE")
+    parser = ArgumentParser(description="Stand-alone loopy frontend")
 
     parser.add_argument("infile")
     parser.add_argument("outfile")
